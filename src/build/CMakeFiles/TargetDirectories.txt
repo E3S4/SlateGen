@@ -1,0 +1,3 @@
+/home/eesa/site_generator/src/build/CMakeFiles/slategen.dir
+/home/eesa/site_generator/src/build/CMakeFiles/edit_cache.dir
+/home/eesa/site_generator/src/build/CMakeFiles/rebuild_cache.dir
