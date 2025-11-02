@@ -1,0 +1,10 @@
+# Build and binary output
+/build/
+bin/
+out/
+dist/
+*.o
+*.obj
+*.exe
+*.out
+
