@@ -1,113 +1,111 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <string>
 #include <filesystem>
+#include <string>
 #include <regex>
-#include <map>
 
 namespace fs = std::filesystem;
 
-// Read a file fully into a string
-std::string read_file(const fs::path& path) {
-    std::ifstream f(path);
-    std::stringstream buffer;
-    buffer << f.rdbuf();
-    return buffer.str();
-}
-
-// Write content to a file (auto creates directories)
-void write_file(const fs::path& path, const std::string& content) {
-    fs::create_directories(path.parent_path());
-    std::ofstream f(path);
-    f << content;
-}
-
-// Very minimal Markdown → HTML converter
-std::string markdown_to_html(const std::string& markdown) {
+// Simple Markdown → HTML converter (basic headers, bold, italics, lists)
+std::string markdownToHTML(const std::string& markdown) {
     std::string html = markdown;
-    html = std::regex_replace(html, std::regex(R"(\*\*(.*?)\*\*)"), "<b>$1</b>");
-    html = std::regex_replace(html, std::regex(R"(\*(.*?)\*)"), "<i>$1</i>");
-    html = std::regex_replace(html, std::regex(R"(^# (.*)$)", std::regex_constants::multiline), "<h1>$1</h1>");
-    html = std::regex_replace(html, std::regex(R"(^## (.*)$)", std::regex_constants::multiline), "<h2>$1</h2>");
-    html = std::regex_replace(html, std::regex(R"(^### (.*)$)", std::regex_constants::multiline), "<h3>$1</h3>");
-    html = std::regex_replace(html, std::regex(R"(\[(.*?)\]\((.*?)\))"), "<a href=\"$2\">$1</a>");
-    html = std::regex_replace(html, std::regex(R"(\n\n)"), "<br><br>");
+
+    // headers
+    html = std::regex_replace(html, std::regex(R"(^# (.*))", std::regex::multiline), "<h1>$1</h1>");
+    html = std::regex_replace(html, std::regex(R"(^## (.*))", std::regex::multiline), "<h2>$1</h2>");
+    html = std::regex_replace(html, std::regex(R"(^### (.*))", std::regex::multiline), "<h3>$1</h3>");
+
+    // bold + italic
+    html = std::regex_replace(html, std::regex(R"(\*\*(.*?)\*\*)"), "<strong>$1</strong>");
+    html = std::regex_replace(html, std::regex(R"(\*(.*?)\*)"), "<em>$1</em>");
+
+    // unordered lists
+    html = std::regex_replace(html, std::regex(R"(^- (.*))", std::regex::multiline), "<li>$1</li>");
+    html = std::regex_replace(html, std::regex(R"((<li>.*</li>)+)"), "<ul>$&</ul>");
+
+    // paragraphs
+    html = std::regex_replace(html, std::regex(R"((^|\n)([^<\n][^\n]*)(\n|$))"), "$1<p>$2</p>$3");
+
     return html;
 }
 
-// Replace {{placeholders}} with actual values in the HTML template
-std::string apply_template(const std::string& tmpl, const std::map<std::string, std::string>& vars) {
-    std::string out = tmpl;
-    for (const auto& [key, val] : vars) {
-        out = std::regex_replace(out, std::regex("\\{\\{" + key + "\\}\\}"), val);
-    }
-    return out;
+// Read file into string
+std::string readFile(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) throw std::runtime_error("Failed to open file: " + path);
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    return ss.str();
 }
 
-// Walk through the source directory, converting .md → .html, and copying other files
-void process_directory(const fs::path& src, const fs::path& dst, const std::string& tmpl, const std::string& style_path) {
-    for (const auto& entry : fs::recursive_directory_iterator(src)) {
-        if (entry.is_regular_file()) {
-            auto rel = fs::relative(entry.path(), src);
-            auto out_path = dst / rel;
+// Write string to file
+void writeFile(const std::string& path, const std::string& content) {
+    std::ofstream file(path);
+    if (!file.is_open()) throw std::runtime_error("Failed to write file: " + path);
+    file << content;
+}
 
-            // If markdown file → convert and write as .html
-            if (entry.path().extension() == ".md") {
-                std::string md = read_file(entry.path());
-                std::string html_content = markdown_to_html(md);
+// Inject Markdown HTML into template
+void convertMarkdownToHtml(const std::string& inputFile, const std::string& outputFile) {
+    std::string markdown = readFile(inputFile);
+    std::string content = markdownToHTML(markdown);
+    std::string templateHtml = readFile("template.html");
 
-                std::map<std::string, std::string> vars = {
-                    {"title", entry.path().stem().string()},
-                    {"style", style_path},
-                    {"content", html_content}
-                };
+    // title = filename without extension
+    std::string title = fs::path(inputFile).stem().string();
+    templateHtml = std::regex_replace(templateHtml, std::regex(R"(\{\{title\}\})"), title);
+    templateHtml = std::regex_replace(templateHtml, std::regex(R"(\{\{content\}\})"), content);
 
-                std::string html = apply_template(tmpl, vars);
-                out_path.replace_extension(".html");
-                write_file(out_path, html);
-            } 
-            // Otherwise copy directly (e.g., CSS, images)
-            else {
-                fs::create_directories(out_path.parent_path());
-                fs::copy_file(entry.path(), out_path, fs::copy_options::overwrite_existing);
-            }
+    writeFile(outputFile, templateHtml);
+    std::cout << "Converted: " << inputFile << " -> " << outputFile << std::endl;
+}
+
+// Help message
+void printHelp() {
+    std::cout << "SlateGen - Minimal Static Site Generator\n";
+    std::cout << "Usage:\n";
+    std::cout << "  slategen <input> <output>\n";
+    std::cout << "    <input>  : Markdown file or directory\n";
+    std::cout << "    <output> : Output file or directory\n\n";
+    std::cout << "Examples:\n";
+    std::cout << "  slategen src/ output/            Convert all .md files in src/ to HTML\n";
+    std::cout << "  slategen about.md about.html     Convert a single file\n\n";
+    std::cout << "Options:\n";
+    std::cout << "  -h, --help   Show this help message\n";
+}
+
+int main(int argc, char* argv[]) {
+    try {
+        if (argc < 2 || std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help") {
+            printHelp();
+            return 0;
         }
-    }
-}
 
-int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "Usage: slategen <src> <out> [template] [style]\n";
+        fs::path inputPath = argv[1];
+        fs::path outputPath = argv[2];
+
+        if (fs::is_directory(inputPath)) {
+            fs::create_directories(outputPath);
+            for (const auto& entry : fs::recursive_directory_iterator(inputPath)) {
+                if (entry.path().extension() == ".md") {
+                    fs::path relative = entry.path().filename();
+                    fs::path outFile = outputPath / (relative.stem().string() + ".html");
+                    convertMarkdownToHtml(entry.path().string(), outFile.string());
+                }
+            }
+        } else if (fs::is_regular_file(inputPath)) {
+            convertMarkdownToHtml(inputPath.string(), outputPath.string());
+        } else {
+            std::cerr << "Invalid input path: " << inputPath << std::endl;
+            return 1;
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
 
-    fs::path src = argv[1];
-    fs::path dst = argv[2];
-    std::string tmpl;
-    std::string style_path = (argc > 4) ? argv[4] : "style.css";
-
-    // Load template file if provided, else use default HTML structure
-    if (argc > 3) tmpl = read_file(argv[3]);
-    else tmpl = R"(<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{title}}</title>
-<link rel="stylesheet" href="{{style}}">
-</head>
-<body>
-<main>
-{{content}}
-</main>
-</body>
-</html>)";
-
-    // Start processing the site
-    process_directory(src, dst, tmpl, style_path);
-
-    std::cout << "Site generated successfully.\n";
     return 0;
 }
 
